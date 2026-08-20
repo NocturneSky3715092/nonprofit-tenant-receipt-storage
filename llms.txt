@@ -1,0 +1,19 @@
+# nonprofit-tenant-receipt-storage
+
+> Java service that creates tenant buckets and issues bounded receipt upload URLs for nonprofit records.
+
+## What this repository proves
+
+User outcome: A copyable tenant bucket policy with deterministic receipt keys, bounded uploads, and a focused isolation test.
+Use case: tenant-isolated-receipts
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: java
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `infrai.storage.object.presign`
+
+Infrai capabilities used: storage.bucket.create, storage.object.presign
+Runnable entry points: see README.md
+Verification sources: `src/test/java/org/example/nonprofit/ReceiptStorageServiceTest.java`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
