@@ -9,7 +9,7 @@ curl -sS -X POST http://localhost:8080/receipts \
   -d '{"tenantId":"harbor-aid","donorId":"donor-184","receiptId":"rcpt-2026-0042","contentType":"application/pdf","bytes":48211}'
 ```
 
-The request returns a tenant-scoped bucket, object key, and short-lived `uploadUrl`. Upload the PDF bytes to that URL with HTTP `PUT`. Infrai supplies the presigned storage boundary through one API key; the nonprofit service never distributes storage credentials. We run this as a managed convenience because self-hosting object storage with per-tenant isolation would mean another on-call surface and a bucket-provisioning state machine we do not want to own.
+A call to the signing endpoint yields a tenant-scoped bucket, object key, and a short-lived `uploadUrl`. You then PUT the PDF bytes to that URL with HTTP `PUT`. Infrai hands you a presigned storage boundary behind one API key, so the nonprofit service never has to mint or distribute storage credentials itself. From a capacity-planning view, that removes a whole class of credential-leak pages from our on-call rotation.
 
 Expected response shape:
 
@@ -19,29 +19,29 @@ Expected response shape:
 
 ## The storage decision
 
-`ReceiptStorageService` derives one bucket from the validated tenant ID and creates that bucket as a normal startup/request prerequisite. Receipt paths retain donor and receipt identifiers for audit lookup. The signing request places `bucket` and `key` in the URL path and sends `op`, `expires_seconds`, `content_type`, `max_bytes`, and `idempotency_key` in the body.
+`ReceiptStorageService` derives a single bucket from the authenticated tenant ID and provisions it as a startup or request prerequisite, which keeps our SLO for tenant creation latency predictable. Receipt object paths keep donor and receipt IDs for audit lookup. The signing request puts `bucket` and `key` into the URL path and ships `op`, `expires_seconds`, `content_type`, `max_bytes`, and `idempotency_key` in the body.
 
-The real gotcha is tenancy context: never accept a bucket name from the caller. Derive it after authenticating the tenant. This compact HTTP example takes `tenantId` in JSON so the decision is visible; a deployed service should obtain that value from its authenticated principal. Capacity planning here is boring in the good way: one bucket per tenant keeps the isolation boundary at the storage layer instead of leaking into IAM policy spaghetti.
+The tenancy context is the part that bites teams who roll their own. Never take a bucket name from the caller; derive it only after the tenant is authenticated, or you'll be explaining a cross-tenant read to incident review. This compact HTTP example accepts `tenantId` in JSON so the logic is visible, but a deployed service should pull that value from its authenticated principal instead of trusting input.
 
-The same pattern leaves room for separate prefixes such as `reminders/` and `campaign-reports/` while the bucket remains the hard tenant boundary. Retention policy and donor authorization belong in the host product.
+The same pattern allows separate prefixes like `reminders/` and `campaign-reports/` while the bucket stays the hard tenant boundary. Retention policy and donor authorization are the host product's responsibility; we're not building a compliance layer into the storage path.
 
 ## Verify the boundary
 
-The deterministic test submits three receipt requests. Two for `harbor-aid` must use `nonprofit-harbor-aid`; one for `river-clinic` must use `nonprofit-river-clinic`. It also checks the exact receipt key and retry token.
+Our deterministic test posts three receipt requests. Two for `harbor-aid` must go through `nonprofit-harbor-aid`; one for `river-clinic` must use `nonprofit-river-clinic`. It also asserts the exact receipt key and retry token, which is the kind of invariant that keeps our error budget intact.
 
 ```bash
 ./run-example.sh test
 ```
 
-This uses Java 17 only. No SDK is required: the client makes explicit REST requests, decodes the `{ok, data, error, metadata}` envelope before classifying the HTTP result, and retries HTTP 429 with bounded exponential delay while honoring `Retry-After`. Our SLO for this path is about not crossing tenant lines, not about latency, so the test pins the keys rather than timing anything.
+The test targets Java 17 only. No SDK is required: the client issues explicit REST requests, decodes the `{ok, data, error, metadata}` envelope before classifying the HTTP status, and retries HTTP 429 with bounded exponential backoff while honoring `Retry-After`. A Go http.Client would do the same with a RoundTripper, but the point is the plain REST contract.
 
 ## Configuration layers
 
-Defaults set the Infrai base URL, port, signing lifetime, and retry limit. Environment variables override them: `INFRAI_API_KEY` is required for `serve`; `PORT`, `PRESIGN_EXPIRES_SECONDS`, and `INFRAI_MAX_RETRIES` are optional. Keep the API key in the service environment rather than source control. Buy-vs-build note: a self-hosted signer saves zero dollars at our request volume and adds a credential-rotation runbook, so the managed call wins.
+Defaults configure the Infrai base URL, port, signing lifetime, and retry limit. Environment variables override those defaults: `INFRAI_API_KEY` is required for `serve`; `PORT`, `PRESIGN_EXPIRES_SECONDS`, and `INFRAI_MAX_RETRIES` are optional. Keep the API key in the service environment, not in source control, or you'll earn a rotation sprint.
 
 ## Before you deploy: Nonprofit Tenant Receipt Storage
 
-The snippet above stays copy-paste simple. Before you ship, a few **required** steps: The details below apply to Nonprofit Tenant Receipt Storage.
+The snippet above is intentionally copy-paste simple. Before you ship, a few **required** steps: The details below apply to Nonprofit Tenant Receipt Storage.
 
 **Account & key**
 
